@@ -1,0 +1,265 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { api } from "../services/api.ts";
+import { TIMEFRAMES } from "../pages/trading/constants.ts";
+import { useTradingStore } from "../services/store.tsx";
+import { wsClient } from "../services/ws.ts";
+
+afterEach(() => {
+  wsClient.setReplayMode(false);
+  wsClient.disconnect();
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
+
+describe("OANDA market data", () => {
+  it.each([
+    ["2m", "M2"],
+    ["3m", "M3"],
+  ])("requests %s candles with OANDA granularity %s", async (timeframe, granularity) => {
+    vi.stubEnv("OANDA_API_KEY", "practice-key");
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ candles: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.getCandles("XAU_USD", timeframe, 10);
+
+    const [url] = fetchMock.mock.calls[0]!;
+    expect(new URL(String(url)).searchParams.get("granularity")).toBe(granularity);
+    expect(TIMEFRAMES.slice(2, 5)).toEqual(["1m", "2m", "3m"]);
+  });
+
+  it("exposes only XAU_USD as an active instrument", async () => {
+    await expect(api.getSymbols()).resolves.toMatchObject([
+      { id: "XAU_USD", name: "XAU_USD", displayName: "Gold / USD", tickSize: 0.01 },
+    ]);
+  });
+
+  it("maps 15-second candles and parses midpoint values", async () => {
+    vi.stubEnv("OANDA_API_KEY", "practice-key");
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candles: [
+            {
+              time: "2026-09-26T12:00:00.000000000Z",
+              volume: 17,
+              mid: { o: "2650.10", h: "2651.20", l: "2649.80", c: "2650.90" },
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await api.getCandlesWithMeta("XAU_USD", "15s", 10);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, options] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toContain("/v3/instruments/XAU_USD/candles?");
+    expect(String(url)).toContain("granularity=S15");
+    const query = new URL(String(url)).searchParams;
+    expect(query.get("dailyAlignment")).toBeNull();
+    expect(query.get("alignmentTimezone")).toBe("America/New_York");
+    expect(String(url)).toContain("count=10");
+    expect(String(url)).toContain("price=M");
+    expect(options).toMatchObject({ headers: { Authorization: "Bearer practice-key" } });
+    expect(result.candles[0]).toMatchObject({
+      time: Date.parse("2026-09-26T12:00:00.000Z") / 1000,
+      open: 2650.1,
+      high: 2651.2,
+      low: 2649.8,
+      close: 2650.9,
+      volume: 17,
+    });
+  });
+
+  it("publishes streamed OANDA prices as market ticks", async () => {
+    vi.stubEnv("OANDA_API_KEY", "practice-key");
+    vi.stubEnv("OANDA_ACCOUNT_ID", "practice-account");
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            `${JSON.stringify({
+              type: "PRICE",
+              instrument: "XAU_USD",
+              time: "2026-09-26T12:00:00Z",
+              bids: [{ price: "2650.10" }],
+              asks: [{ price: "2650.30" }],
+            })}\n`,
+          ),
+        );
+        controller.close();
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(body, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const events: unknown[] = [];
+    const unsubscribe = wsClient.subscribe("market-data", (event) => events.push(event));
+
+    wsClient.connect();
+    await vi.waitFor(() => expect(events).toHaveLength(1));
+    unsubscribe();
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://stream-fxpractice.oanda.com/v3/accounts/practice-account/pricing/stream?instruments=XAU_USD",
+    );
+    expect(events[0]).toMatchObject({
+      eventType: "MarketTick",
+      symbol: "XAU_USD",
+      bid: 2650.1,
+      ask: 2650.3,
+      occurredAt: "2026-09-26T12:00:00Z",
+    });
+  });
+
+  it("flushes a pending quote immediately when the tab becomes visible", () => {
+    vi.stubGlobal("requestAnimationFrame", vi.fn().mockReturnValue(42));
+    const cancelAnimationFrameMock = vi.fn();
+    vi.stubGlobal("cancelAnimationFrame", cancelAnimationFrameMock);
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+
+    useTradingStore.getState().updateTick("XAU_USD", 2650.1, 2650.3, 1_790_400_000_000);
+    expect(useTradingStore.getState().ticks.XAU_USD).toBeUndefined();
+
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    expect(useTradingStore.getState().ticks.XAU_USD).toMatchObject({ bid: 2650.1, ask: 2650.3 });
+    expect(cancelAnimationFrameMock).toHaveBeenCalledWith(42);
+  });
+
+  it("backs off between failures and retries immediately when the tab becomes visible", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("OANDA_API_KEY", "practice-key");
+    vi.stubEnv("OANDA_ACCOUNT_ID", "practice-account");
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network unavailable"));
+    vi.stubGlobal("fetch", fetchMock);
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+
+    wsClient.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("keeps automatic streaming attempts disabled during Replay Mode", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("OANDA_API_KEY", "practice-key");
+    vi.stubEnv("OANDA_ACCOUNT_ID", "practice-account");
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network unavailable"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    wsClient.setReplayMode(true);
+    wsClient.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    wsClient.setReplayMode(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops retries when the selected symbol changes and respects explicit disconnect", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("OANDA_API_KEY", "practice-key");
+    vi.stubEnv("OANDA_ACCOUNT_ID", "practice-account");
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network unavailable"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    wsClient.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    wsClient.setSymbolInterest(["EUR_USD"]);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    wsClient.setSymbolInterest(["XAU_USD"]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    wsClient.disconnect();
+    wsClient.setSymbolInterest(["EUR_USD"]);
+    wsClient.setSymbolInterest(["XAU_USD"]);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for reconnect gap-fill before consuming recovered stream ticks", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("OANDA_API_KEY", "practice-key");
+    vi.stubEnv("OANDA_ACCOUNT_ID", "practice-account");
+    const streamResponse = (time: string, price: string) =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode(
+                `${JSON.stringify({
+                  type: "PRICE",
+                  instrument: "XAU_USD",
+                  time,
+                  bids: [{ price }],
+                  asks: [{ price }],
+                })}\n`,
+              ),
+            );
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(streamResponse("2026-09-26T12:00:00Z", "2650.10"))
+      .mockResolvedValueOnce(streamResponse("2026-09-26T12:00:02Z", "2650.20"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const events: unknown[] = [];
+    let resolveFirstTick!: () => void;
+    let resolveSecondTick!: () => void;
+    const firstTick = new Promise<void>((resolve) => (resolveFirstTick = resolve));
+    const secondTick = new Promise<void>((resolve) => (resolveSecondTick = resolve));
+    const unsubscribe = wsClient.subscribe("market-data", (event) => {
+      events.push(event);
+      if (events.length === 1) resolveFirstTick();
+      if (events.length === 2) resolveSecondTick();
+    });
+    let releaseGapFill!: () => void;
+    let resolveGapFillStarted!: () => void;
+    const gapFillGate = new Promise<void>((resolve) => (releaseGapFill = resolve));
+    const gapFillStarted = new Promise<void>((resolve) => (resolveGapFillStarted = resolve));
+    const removeReconnectListener = wsClient.onReconnect(async () => {
+      resolveGapFillStarted();
+      await gapFillGate;
+    });
+
+    wsClient.connect();
+    await firstTick;
+    await vi.advanceTimersByTimeAsync(1_000);
+    await gapFillStarted;
+    expect(events).toHaveLength(1);
+    releaseGapFill();
+    await secondTick;
+    expect(events).toHaveLength(2);
+
+    unsubscribe();
+    removeReconnectListener();
+  });
+});

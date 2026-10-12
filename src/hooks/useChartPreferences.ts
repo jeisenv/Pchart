@@ -1,0 +1,347 @@
+import { useEffect, useState } from "react";
+import type { MagnetMode } from "../pages/trading/constants.ts";
+import { useAuthStore } from "../services/store.tsx";
+import {
+  readTraderPrefs as readScopedTraderPrefs,
+  writeTraderPrefs as writeScopedTraderPrefs,
+} from "./useTraderPreferences.ts";
+
+export interface ChartPreferences {
+  overlayPositionsOnChart: boolean;
+  /** Snap drawing anchors to nearby candle O/H/L/C values. */
+  drawingMagnet: boolean;
+  /** Magnet mode: off / weak (snap near) / strong (always snap to OHLC). */
+  magnetMode: MagnetMode;
+  /** Keep the drawing tool armed after each placement. */
+  stayInDrawingMode: boolean;
+  /** Plugin IDs that are currently active (persisted across page loads). */
+  activePlugins: string[];
+  swingStructureLookbackBars: number;
+  swingStructureLineColor: string;
+  swingStructureLineWidth: number;
+  swingStructureShowLabels: boolean;
+  swingStructureShowFormingLeg: boolean;
+  swingStructureHighLabelColor: string;
+  swingStructureLowLabelColor: string;
+  engulfingZonesLookbackBars: number;
+  engulfingZonesMaxPullbackBars: number;
+  engulfingZonesMaxActiveSetups: number;
+  engulfingZonesBullishFillColor: string;
+  engulfingZonesBullishBorderColor: string;
+  engulfingZonesBearishFillColor: string;
+  engulfingZonesBearishBorderColor: string;
+  // ── Candle style (Chart Settings → Colors) ──
+  /** Hex override for up candles; empty string = theme default. */
+  candleUpColor: string;
+  /** Hex override for down candles; empty string = theme default. */
+  candleDownColor: string;
+  candleUpBorderMode: "body" | "custom" | "none";
+  candleUpBorderColor: string;
+  candleDownBorderMode: "body" | "custom" | "none";
+  candleDownBorderColor: string;
+  candleUpWickMode: "body" | "custom";
+  candleUpWickColor: string;
+  candleDownWickMode: "body" | "custom";
+  candleDownWickColor: string;
+  // ── Color overrides (Chart Settings → Colors; empty = theme default) ──
+  colorBackground: string;
+  colorGrid: string;
+  colorScaleText: string;
+  colorCrosshair: string;
+  colorPositionLong: string;
+  colorPositionShort: string;
+  colorOrderLine: string;
+  colorTpLine: string;
+  colorSlLine: string;
+  // ── Chart templates ──
+  /** Name of the template the chart currently tracks ("" = none). */
+  activeChartTemplate: string;
+  /** Auto-save settings changes back to the active template. */
+  chartTemplateAutosave: boolean;
+  showWicks: boolean;
+  showCandleBorders: boolean;
+  showVolume: boolean;
+  showGrid: boolean;
+  showWatermark: boolean;
+  showCountdown: boolean;
+  // ── Challenge-aware overlays ──
+  /** Master switch for rule-derived price lines (daily loss / max DD / target). */
+  challengeOverlay: boolean;
+  challengeDailyLossLine: boolean;
+  challengeMaxDrawdownLine: boolean;
+  challengeProfitTargetLine: boolean;
+}
+
+type TraderPrefs = Record<string, string>;
+
+const CHART_PREFS_UPDATED_EVENT = "chart-preferences-updated";
+
+const DEFAULT_CHART_PREFS: ChartPreferences = {
+  overlayPositionsOnChart: true,
+  drawingMagnet: false,
+  magnetMode: "none",
+  stayInDrawingMode: false,
+  activePlugins: [],
+  swingStructureLookbackBars: 500,
+  swingStructureLineColor: "#1E64E6",
+  swingStructureLineWidth: 2,
+  swingStructureShowLabels: true,
+  swingStructureShowFormingLeg: true,
+  swingStructureHighLabelColor: "#ef4444",
+  swingStructureLowLabelColor: "#22c55e",
+  engulfingZonesLookbackBars: 1000,
+  engulfingZonesMaxPullbackBars: 15,
+  engulfingZonesMaxActiveSetups: 40,
+  engulfingZonesBullishFillColor: "#3b82f6",
+  engulfingZonesBullishBorderColor: "#1e64e6",
+  engulfingZonesBearishFillColor: "#fb923c",
+  engulfingZonesBearishBorderColor: "#ea580c",
+  candleUpColor: "",
+  candleDownColor: "",
+  candleUpBorderMode: "body",
+  candleUpBorderColor: "",
+  candleDownBorderMode: "body",
+  candleDownBorderColor: "",
+  candleUpWickMode: "body",
+  candleUpWickColor: "",
+  candleDownWickMode: "body",
+  candleDownWickColor: "",
+  colorBackground: "",
+  colorGrid: "",
+  colorScaleText: "",
+  colorCrosshair: "",
+  colorPositionLong: "",
+  colorPositionShort: "",
+  colorOrderLine: "",
+  colorTpLine: "",
+  colorSlLine: "",
+  activeChartTemplate: "",
+  chartTemplateAutosave: false,
+  showWicks: true,
+  showCandleBorders: true,
+  showVolume: true,
+  showGrid: true,
+  showWatermark: true,
+  showCountdown: true,
+  challengeOverlay: false,
+  challengeDailyLossLine: false,
+  challengeMaxDrawdownLine: false,
+  challengeProfitTargetLine: false,
+};
+
+/** Boolean preference keys read straight through `toBool` with their default. */
+const BOOL_PREF_KEYS = [
+  "overlayPositionsOnChart",
+  "drawingMagnet",
+  "stayInDrawingMode",
+  "swingStructureShowLabels",
+  "swingStructureShowFormingLeg",
+  "showWicks",
+  "showCandleBorders",
+  "showVolume",
+  "showGrid",
+  "showWatermark",
+  "showCountdown",
+  "challengeOverlay",
+  "challengeDailyLossLine",
+  "challengeMaxDrawdownLine",
+  "challengeProfitTargetLine",
+  "chartTemplateAutosave",
+] as const;
+
+/** String preference keys stored raw (empty string allowed). */
+const STRING_PREF_KEYS = [
+  "candleUpColor",
+  "candleDownColor",
+  "candleUpBorderColor",
+  "candleDownBorderColor",
+  "candleUpWickColor",
+  "candleDownWickColor",
+  "colorBackground",
+  "colorGrid",
+  "colorScaleText",
+  "colorCrosshair",
+  "colorPositionLong",
+  "colorPositionShort",
+  "colorOrderLine",
+  "colorTpLine",
+  "colorSlLine",
+  "activeChartTemplate",
+  "swingStructureLineColor",
+  "swingStructureHighLabelColor",
+  "swingStructureLowLabelColor",
+  "engulfingZonesBullishFillColor",
+  "engulfingZonesBullishBorderColor",
+  "engulfingZonesBearishFillColor",
+  "engulfingZonesBearishBorderColor",
+] as const;
+
+const NUMBER_PREF_KEYS = [
+  "swingStructureLookbackBars",
+  "swingStructureLineWidth",
+  "engulfingZonesLookbackBars",
+  "engulfingZonesMaxPullbackBars",
+  "engulfingZonesMaxActiveSetups",
+] as const;
+
+/**
+ * Preference keys captured in a chart template snapshot — appearance, colors
+ * and overlay choices. Deliberately excludes input behavior (magnet, stay-in-
+ * drawing-mode) and the template bookkeeping keys themselves.
+ */
+export const TEMPLATE_PREF_KEYS = [
+  "overlayPositionsOnChart",
+  "showWicks",
+  "showCandleBorders",
+  "showVolume",
+  "showGrid",
+  "showWatermark",
+  "showCountdown",
+  "challengeOverlay",
+  "challengeDailyLossLine",
+  "challengeMaxDrawdownLine",
+  "challengeProfitTargetLine",
+  "swingStructureLookbackBars",
+  "swingStructureLineColor",
+  "swingStructureLineWidth",
+  "swingStructureShowLabels",
+  "swingStructureShowFormingLeg",
+  "swingStructureHighLabelColor",
+  "swingStructureLowLabelColor",
+  "engulfingZonesLookbackBars",
+  "engulfingZonesMaxPullbackBars",
+  "engulfingZonesMaxActiveSetups",
+  "engulfingZonesBullishFillColor",
+  "engulfingZonesBullishBorderColor",
+  "engulfingZonesBearishFillColor",
+  "engulfingZonesBearishBorderColor",
+  "candleUpColor",
+  "candleDownColor",
+  "candleUpBorderMode",
+  "candleUpBorderColor",
+  "candleDownBorderMode",
+  "candleDownBorderColor",
+  "candleUpWickMode",
+  "candleUpWickColor",
+  "candleDownWickMode",
+  "candleDownWickColor",
+  "colorBackground",
+  "colorGrid",
+  "colorScaleText",
+  "colorCrosshair",
+  "colorPositionLong",
+  "colorPositionShort",
+  "colorOrderLine",
+  "colorTpLine",
+  "colorSlLine",
+] as const;
+
+export type TemplatePrefKey = (typeof TEMPLATE_PREF_KEYS)[number];
+
+function toMagnetMode(input: string | undefined): MagnetMode | undefined {
+  return input === "weak" || input === "strong" || input === "none" ? input : undefined;
+}
+
+function toCandleBorderMode(input: string | undefined): ChartPreferences["candleUpBorderMode"] | undefined {
+  return input === "body" || input === "custom" || input === "none" ? input : undefined;
+}
+
+function toCandleWickMode(input: string | undefined): ChartPreferences["candleUpWickMode"] | undefined {
+  return input === "body" || input === "custom" ? input : undefined;
+}
+
+function readTraderPrefs(): TraderPrefs {
+  const userId = useAuthStore.getState().user?.id;
+  return readScopedTraderPrefs(userId);
+}
+
+function dispatchChartPrefsUpdated(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(CHART_PREFS_UPDATED_EVENT));
+}
+
+function toBool(input: string | undefined, fallback: boolean): boolean {
+  if (input == null) return fallback;
+  if (input === "true") return true;
+  if (input === "false") return false;
+  return fallback;
+}
+
+function toStringArray(input: string | undefined, fallback: string[]): string[] {
+  if (input == null) return fallback;
+  try {
+    const parsed = JSON.parse(input);
+    return Array.isArray(parsed) ? (parsed as string[]) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function getChartPreferencesFromStorage(): ChartPreferences {
+  const prefs = readTraderPrefs();
+  const result = { ...DEFAULT_CHART_PREFS };
+  for (const key of BOOL_PREF_KEYS) {
+    result[key] = toBool(prefs[key], DEFAULT_CHART_PREFS[key]);
+  }
+  for (const key of STRING_PREF_KEYS) {
+    result[key] = prefs[key] ?? DEFAULT_CHART_PREFS[key];
+  }
+  for (const key of NUMBER_PREF_KEYS) {
+    const parsed = Number(prefs[key]);
+    const value = Number.isFinite(parsed) ? parsed : DEFAULT_CHART_PREFS[key];
+    if (key === "swingStructureLookbackBars") {
+      result[key] = Math.max(1, Math.floor(value));
+    } else if (key === "swingStructureLineWidth") {
+      result[key] = Math.min(5, Math.max(1, value));
+    } else if (key === "engulfingZonesMaxActiveSetups") {
+      result[key] = Math.min(500, Math.max(1, Math.floor(value)));
+    } else {
+      result[key] = Math.min(10000, Math.max(1, Math.floor(value)));
+    }
+  }
+  // Migrate the old boolean magnet flag to the tri-state when unset.
+  result.magnetMode =
+    toMagnetMode(prefs.magnetMode) ?? (toBool(prefs.drawingMagnet, false) ? "weak" : "none");
+  result.candleUpBorderMode = toCandleBorderMode(prefs.candleUpBorderMode) ?? "body";
+  result.candleDownBorderMode = toCandleBorderMode(prefs.candleDownBorderMode) ?? "body";
+  result.candleUpWickMode = toCandleWickMode(prefs.candleUpWickMode) ?? "body";
+  result.candleDownWickMode = toCandleWickMode(prefs.candleDownWickMode) ?? "body";
+  result.activePlugins = toStringArray(prefs.activePlugins, DEFAULT_CHART_PREFS.activePlugins);
+  return result;
+}
+
+export function updateChartPreferences(patch: Partial<ChartPreferences>): TraderPrefs {
+  const next: TraderPrefs = { ...readTraderPrefs() };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value == null) continue;
+    // Strings store raw; booleans/arrays serialise to "true"/"false"/JSON —
+    // the exact formats toBool/toStringArray parse back.
+    next[key] = typeof value === "string" ? value : JSON.stringify(value);
+  }
+
+  const userId = useAuthStore.getState().user?.id;
+  writeScopedTraderPrefs(next, userId);
+  dispatchChartPrefsUpdated();
+  return next;
+}
+
+export function notifyChartPreferencesUpdated(): void {
+  dispatchChartPrefsUpdated();
+}
+
+export function useChartPreferences(): ChartPreferences {
+  const userId = useAuthStore((s) => s.user?.id);
+  const [prefs, setPrefs] = useState<ChartPreferences>(() => getChartPreferencesFromStorage());
+
+  useEffect(() => {
+    const refresh = () => setPrefs(getChartPreferencesFromStorage());
+    window.addEventListener("storage", refresh);
+    window.addEventListener(CHART_PREFS_UPDATED_EVENT, refresh);
+    return () => {
+      window.removeEventListener("storage", refresh);
+      window.removeEventListener(CHART_PREFS_UPDATED_EVENT, refresh);
+    };
+  }, [userId]);
+
+  return prefs;
+}
