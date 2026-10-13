@@ -109,6 +109,11 @@ export function TradingPage() {
   const [activeIndicators, setActiveIndicators] = useState<IndicatorType[]>([]);
   const [showIndicatorMenu, setShowIndicatorMenu] = useState(false);
   const [drawingTool, setDrawingTool] = useState<DrawingTool>("none");
+  const toggleIndicatorMenu = useCallback(() => setShowIndicatorMenu((visible) => !visible), []);
+  const handleDrawingTool = useCallback((nextTool: DrawingTool) => setDrawingTool(nextTool), []);
+  const handleToggleIndicator = useCallback((type: IndicatorType) => {
+    setActiveIndicators((prev) => (prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]));
+  }, []);
   const {
     drawings,
     addDrawing,
@@ -459,15 +464,11 @@ export function TradingPage() {
         onSwingStructureSettingsChange={updateSwingStructureSettings}
         engulfingZonesSettings={engulfingZonesSettings}
         onEngulfingZonesSettingsChange={updateEngulfingZonesSettings}
-        onToggleIndicator={(type) =>
-          setActiveIndicators((prev) =>
-            prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type],
-          )
-        }
+        onToggleIndicator={handleToggleIndicator}
         showIndicatorMenu={showIndicatorMenu}
-        onToggleIndicatorMenu={() => setShowIndicatorMenu((v) => !v)}
+        onToggleIndicatorMenu={toggleIndicatorMenu}
         drawingTool={drawingTool}
-        onDrawingTool={setDrawingTool}
+        onDrawingTool={handleDrawingTool}
         drawings={drawings}
         onClearDrawings={clearDrawings}
         isReplaying={isReplaying}

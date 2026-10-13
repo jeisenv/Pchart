@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, CloudUpload, Plus, Save, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   type ChartPreferences,
   TEMPLATE_PREF_KEYS,
@@ -247,7 +247,7 @@ function TemplateList({
   );
 }
 
-export function ChartTemplatesMenu(props: ChartTemplatesMenuProps) {
+export const ChartTemplatesMenu = memo(function ChartTemplatesMenu(props: ChartTemplatesMenuProps) {
   const { timeframe, onSetTimeframe, activeIndicators, onSetIndicators, activePlugins, onSetPlugins } = props;
   const prefs = useChartPreferences();
   const { templates, save, remove } = useChartTemplates();
@@ -347,4 +347,4 @@ export function ChartTemplatesMenu(props: ChartTemplatesMenuProps) {
       )}
     </div>
   );
-}
+});

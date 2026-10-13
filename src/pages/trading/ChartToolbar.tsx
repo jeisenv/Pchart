@@ -1,5 +1,5 @@
 import { BarChart3, CalendarClock, ChevronDown, Magnet, Maximize2, Minimize2, Pencil, Repeat, Settings2, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { INDICATOR_REGISTRY, type IndicatorType } from "../../lib/indicators.ts";
 import type { EngulfingZonesSettings } from "../../lib/engulfing-zones.ts";
 import type { SwingStructureSettings } from "../../lib/swing-structure.ts";
@@ -57,7 +57,7 @@ export interface ChartToolbarProps {
   onToggleFullscreen?: () => void;
 }
 
-export function ChartToolbar({
+export const ChartToolbar = memo(function ChartToolbar({
   selectedSymbol,
   symbols,
   onSymbolChange,
@@ -439,7 +439,7 @@ export function ChartToolbar({
   </div>
 </div>
   );
-}
+});
 
 function NumberSetting({
   label,
