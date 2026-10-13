@@ -85,7 +85,6 @@ class OandaWsClient {
   private _state: ConnectionState = "disconnected";
   private stateListeners = new Set<(s: ConnectionState) => void>();
   private reconnectListeners = new Set<() => Promise<void> | void>();
-  private replayMode = false;
   private streamEstablished = false;
   private lastStreamActivityAt = 0;
   private attemptController: AbortController | null = null;
@@ -128,7 +127,7 @@ class OandaWsClient {
     this.controller = controller;
     this.setState("connecting");
     this.visibilityHandler = () => {
-      if (document.visibilityState !== "visible" || this.replayMode || !this.controller) return;
+      if (document.visibilityState !== "visible" || !this.controller) return;
       const streamIsStale =
         this.state !== "connected" || Date.now() - this.lastStreamActivityAt > 30_000;
       if (streamIsStale) {
@@ -145,13 +144,6 @@ class OandaWsClient {
     this.sessionRequested = false;
     this.stopSession();
     this.setState("disconnected");
-  }
-
-  setReplayMode(isReplaying: boolean): void {
-    this.replayMode = isReplaying;
-    if (isReplaying && this.state !== "connected") this.attemptController?.abort();
-    if (!isReplaying) this.immediateRetry = true;
-    this.retryWake?.();
   }
 
   reauthenticate(_token: string): void {
@@ -203,11 +195,6 @@ class OandaWsClient {
     let retryDelay = 1_000;
     let hasAttempted = false;
     while (!signal.aborted) {
-      if (this.replayMode) {
-        this.setState("disconnected");
-        await this.waitForRetry(signal, null);
-        continue;
-      }
       const attempt = new AbortController();
       this.attemptController = attempt;
       const abortAttempt = () => attempt.abort();
@@ -252,8 +239,7 @@ class OandaWsClient {
       signal.removeEventListener("abort", abortAttempt);
       if (this.attemptController === attempt) this.attemptController = null;
       if (signal.aborted) break;
-      if (attempt.signal.aborted && this.replayMode) continue;
-      if (!signal.aborted && !this.replayMode && this.streamInterested) {
+      if (!signal.aborted && this.streamInterested) {
         this.setState("disconnected");
         const delay = this.immediateRetry ? 0 : retryDelay;
         this.immediateRetry = false;

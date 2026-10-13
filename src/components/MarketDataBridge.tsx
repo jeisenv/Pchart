@@ -1,6 +1,6 @@
 import { useEffect, startTransition } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useAuthStore, useTradingStore } from "../services/store.tsx";
+import { useTradingStore } from "../services/store.tsx";
 import { wsClient } from "../services/ws.ts";
 import { queryKeys } from "../services/queries.ts";
 import type { Position, Order } from "../services/schemas.ts";
@@ -36,14 +36,7 @@ type MarketDataEvent =
       volume: number;
       timestamp: number;
     }
-  | { eventType: "CandleClosed"; symbol: string; timeframe: string }
-  | {
-      eventType: "ReplayStateChanged";
-      action?: string;
-      speed?: number;
-      userId?: string;
-      cursorTimestamp?: number;
-    };
+  | { eventType: "CandleClosed"; symbol: string; timeframe: string };
 
 // Position WS event types — enriched server-side with _entity for direct cache updates
 type PositionWsEvent = {
@@ -168,7 +161,6 @@ export function MarketDataBridge() {
   const updateTick = useTradingStore((s) => s.updateTick);
   const updateLiveTick = useTradingStore((s) => s.updateLiveTick);
   const updateCandleFromWs = useTradingStore((s) => s.updateCandleFromWs);
-  const onReplayStateChanged = useTradingStore((s) => s.onReplayStateChanged);
   const updateAccountInStore = useTradingStore((s) => s.updateAccountInStore);
   const loadAccounts = useTradingStore((s) => s.loadAccounts);
   const queryClient = useQueryClient();
@@ -195,20 +187,12 @@ export function MarketDataBridge() {
         queryClient.invalidateQueries({
           queryKey: queryKeys.market.candles(wsEvent.symbol, wsEvent.timeframe),
         });
-      } else if (wsEvent.eventType === "ReplayStateChanged") {
-        const currentUserId = useAuthStore.getState().user?.id;
-        if (wsEvent.userId && currentUserId && wsEvent.userId !== currentUserId) return;
-        onReplayStateChanged(wsEvent.action || "started", {
-          speed: wsEvent.speed,
-          cursorTimestamp: wsEvent.cursorTimestamp,
-        });
-        queryClient.invalidateQueries({ queryKey: ["candles"] });
       }
     });
     return () => {
       unsub();
     };
-  }, [updateTick, updateLiveTick, updateCandleFromWs, onReplayStateChanged, queryClient]);
+  }, [updateTick, updateLiveTick, updateCandleFromWs, queryClient]);
 
   // Account/equity events.
   useEffect(() => {

@@ -5,7 +5,6 @@ import { useTradingStore } from "../services/store.tsx";
 import { wsClient } from "../services/ws.ts";
 
 afterEach(() => {
-  wsClient.setReplayMode(false);
   wsClient.disconnect();
   vi.useRealTimers();
   vi.unstubAllEnvs();
@@ -158,23 +157,6 @@ describe("OANDA market data", () => {
     document.dispatchEvent(new Event("visibilitychange"));
     await vi.advanceTimersByTimeAsync(0);
     expect(fetchMock).toHaveBeenCalledTimes(4);
-  });
-
-  it("keeps automatic streaming attempts disabled during Replay Mode", async () => {
-    vi.useFakeTimers();
-    vi.stubEnv("OANDA_API_KEY", "practice-key");
-    vi.stubEnv("OANDA_ACCOUNT_ID", "practice-account");
-    const fetchMock = vi.fn().mockRejectedValue(new Error("network unavailable"));
-    vi.stubGlobal("fetch", fetchMock);
-
-    wsClient.setReplayMode(true);
-    wsClient.connect();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(fetchMock).not.toHaveBeenCalled();
-
-    wsClient.setReplayMode(false);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("stops retries when the selected symbol changes and respects explicit disconnect", async () => {

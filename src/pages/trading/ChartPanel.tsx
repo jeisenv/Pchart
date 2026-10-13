@@ -256,16 +256,6 @@ export interface ChartPanelProps {
     positionId: string,
     mods: { takeProfit?: number | null; stopLoss?: number | null },
   ) => void;
-  replayTradeEvents?: Array<{
-    id: string;
-    type: "entry" | "exit" | "violation";
-    timestamp: string;
-    symbolName: string | null;
-    side: string | null;
-    price: number | null;
-    pnl: number | null;
-    ruleCode?: string;
-  }>;
   activePlugins?: string[];
   /** Toggle a chart plugin (session breaks etc.) — used by the settings dialog. */
   onTogglePlugin?: (id: string) => void;
@@ -279,11 +269,6 @@ export interface ChartPanelProps {
   onClearDrawings?: () => void;
   /** Context-menu "Remove N indicators". */
   onClearIndicators?: () => void;
-  /**
-   * Session replay is active — candles are a historical slice, so the
-   * staleness watchdog must not treat the old last-bar as a data gap.
-   */
-  isReplaying?: boolean;
 }
 
 // ── Chart plugin overlays ─────────────────────────────────────────────────────
@@ -599,28 +584,6 @@ function reapplyLive(live: LiveCandleData | undefined, ctx: RtCtx): void {
   ctx.lastCandle.current = bar;
 }
 
-// Replay the buffered live candle immediately after history is painted so the
-// last bar isn't stuck at the final historical close until the next tick.
-function replayBufferedLive(
-  buffered: LiveCandleData | undefined,
-  chartData: CandlestickData<Time>[],
-  ctx: RtCtx,
-): void {
-  if (!buffered) return;
-  const liveTs = toUnixSeconds(buffered.timestamp);
-  const lastHistBarSec = (chartData[chartData.length - 1]?.time as number) ?? 0;
-  if (Number.isNaN(liveTs) || liveTs <= 0 || liveTs < lastHistBarSec) return;
-  const liveBar = liveBarFrom(buffered);
-  if (!liveBar) return;
-  try {
-    ctx.series.update(liveBar);
-    ctx.lastCandle.current = liveBar;
-    ctx.liveCandleTs.current = toUnixMs(buffered.timestamp);
-  } catch {
-    /* safe to ignore — timestamp may be older than series */
-  }
-}
-
 // If the freshest bar is >2 intervals stale, schedule one delayed refetch to
 // close the gap before any live CandleUpdate paints over it. Throttled to 3 s.
 function scheduleStaleRefetch(
@@ -768,48 +731,6 @@ function addOrderOverlay(
 }
 
 // ── Chart interaction handlers ───────────────────────────────────────────────
-
-// ── Replay trade-event marker helpers ────────────────────────────────────────
-
-type ReplayTradeEvent = NonNullable<ChartPanelProps["replayTradeEvents"]>[number];
-
-function entryMarker(ev: ReplayTradeEvent, time: Time): SeriesMarker<Time> {
-  const isBuy = ev.side === "BUY";
-  return {
-    time,
-    position: isBuy ? "belowBar" : "aboveBar",
-    color: isBuy ? "#2196F3" : "#FF9800",
-    shape: isBuy ? "arrowUp" : "arrowDown",
-    text: isBuy ? "B" : "S",
-  };
-}
-
-function exitMarker(ev: ReplayTradeEvent, time: Time): SeriesMarker<Time> {
-  const profit = ev.pnl != null && ev.pnl >= 0;
-  const text = ev.pnl != null ? `${ev.pnl >= 0 ? "+" : ""}$${Math.abs(ev.pnl).toFixed(0)}` : "Exit";
-  return {
-    time,
-    position: profit ? "aboveBar" : "belowBar",
-    color: profit ? "#0ecb81" : "#f6465d",
-    shape: "circle",
-    text,
-  };
-}
-
-function buildReplayMarker(ev: ReplayTradeEvent, timeframe: Timeframe): SeriesMarker<Time> | null {
-  const evMs = new Date(ev.timestamp).getTime();
-  if (Number.isNaN(evMs)) return null;
-  const time = getCandleBucketTime(evMs, timeframe) as Time;
-  if (ev.type === "entry") return entryMarker(ev, time);
-  if (ev.type === "exit") return exitMarker(ev, time);
-  return {
-    time,
-    position: "aboveBar",
-    color: "#FF1744",
-    shape: "square",
-    text: ev.ruleCode ?? "Rule",
-  };
-}
 
 // Symbol and timeframe header in the chart's top-left corner.
 function ChartLegendHeader({
@@ -964,7 +885,6 @@ export function ChartPanel({
   pipDigits,
   symbolInfo,
   onModifyPosition,
-  replayTradeEvents,
   activePlugins = [],
   onTogglePlugin,
   accountEquity = 0,
@@ -972,7 +892,6 @@ export function ChartPanel({
   onQuickOrder,
   onClearDrawings,
   onClearIndicators,
-  isReplaying = false,
 }: ChartPanelProps) {
   const queryClient = useQueryClient();
   const connectionState = useConnectionState();
@@ -1023,10 +942,6 @@ export function ChartPanel({
   }, [tick]);
 
   useEffect(() => {
-    if (isReplaying) {
-      setShowLiveWait(false);
-      return;
-    }
     if (connectionState !== "connected") {
       setShowLiveWait(true);
       return;
@@ -1038,7 +953,7 @@ export function ChartPanel({
     const delayMs = Math.max(0, LIVE_DATA_WAIT_MS - ageMs);
     const timer = window.setTimeout(() => setShowLiveWait(true), delayMs);
     return () => window.clearTimeout(timer);
-  }, [connectionState, isReplaying, selectedSymbol, tick?.timestamp]);
+  }, [connectionState, selectedSymbol, tick?.timestamp]);
 
   const chartPrefs = useChartPreferences();
   // Theme palette with the user's Chart Settings color overrides applied.
@@ -1356,27 +1271,6 @@ export function ChartPanel({
     engulfingZonesSettings,
     `${selectedSymbol}:${timeframe}`,
   );
-
-  // ── Replay trade event markers ─────────────────────────────
-  useEffect(() => {
-    const series = candleSeriesRef.current;
-    if (!series) return;
-    if (!replayTradeEvents || replayTradeEvents.length === 0) {
-      series.setMarkers([]);
-      return;
-    }
-    const markers: SeriesMarker<Time>[] = [];
-    for (const ev of replayTradeEvents) {
-      const marker = buildReplayMarker(ev, timeframe);
-      if (marker) markers.push(marker);
-    }
-    // lightweight-charts requires markers sorted by time ascending
-    markers.sort((a, b) => (a.time as number) - (b.time as number));
-    series.setMarkers(markers);
-    return () => {
-      series.setMarkers([]);
-    };
-  }, [replayTradeEvents, timeframe]);
 
   // ── Candle close countdown timer ───────────────────────────
   useEffect(() => {
@@ -1792,7 +1686,6 @@ export function ChartPanel({
     scrollOrFit(chartRef.current, chartData.length);
     lastLoadKeyRef.current = loadKey;
     liveCandleTsRef.current = 0;
-    replayBufferedLive(buffered, chartData, ctx);
     const chartElement = containerRef.current;
     if (chartElement?.animate && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       chartElement.animate(
@@ -1857,9 +1750,6 @@ export function ChartPanel({
   // tick effects only run when their props change, so this interval is the
   // only recovery path when neither prop is updating.
   useEffect(() => {
-    // Replay shows a historical slice — its last bar is hours or days old by
-    // design, so the staleness check would fire a refetch loop. Skip it.
-    if (isReplaying) return;
     const intervalSec = (TF_INTERVAL_MS[timeframe] ?? 60_000) / 1000;
     const id = setInterval(() => {
       if (!lastCandleRef.current) return;
@@ -1868,7 +1758,7 @@ export function ChartPanel({
       requestGapRefetch(lastGapRefetchAtRef, queryClient, selectedSymbol, timeframe);
     }, 30_000);
     return () => clearInterval(id);
-  }, [selectedSymbol, timeframe, queryClient, isReplaying]);
+  }, [selectedSymbol, timeframe, queryClient]);
 
   // ── Chart plugin overlays ──────────────────────────────────
   // Re-runs when active plugins change or the chart is recreated (isDark /

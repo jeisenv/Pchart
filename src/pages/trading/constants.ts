@@ -16,13 +16,6 @@ export const TIMEFRAMES = [
 ] as const;
 export type Timeframe = (typeof TIMEFRAMES)[number];
 
-/**
- * Master switch for session replay (HUD + scrubber). Disabled on the live
- * terminal until the feature is fully QA'd — flip to `true` to re-enable the
- * replay controls everywhere they mount.
- */
-export const REPLAY_ENABLED = false;
-
 export const CHART_COLORS = {
   dark: {
     background: "#f5f7f8",

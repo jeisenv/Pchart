@@ -81,7 +81,6 @@ export function TradingPage() {
     updateTick,
     activeAccountId,
     symbols: _storeSymbols,
-    replayVersion,
   } = useTradingStore();
   // Chart timeframe persistence (#8)
   const [timeframe, setTimeframe] = useState<Timeframe>(() => {
@@ -300,7 +299,7 @@ export function TradingPage() {
     data: candles = [],
     isFetching: isCandlesFetching,
     isPlaceholderData: isCandlesPlaceholder,
-  } = useCandles(selectedSymbol, timeframe, candleLimit, replayVersion);
+  } = useCandles(selectedSymbol, timeframe, candleLimit);
   useEffect(() => {
     void prefetchCandlesForTimeframes(
       queryClient,
@@ -308,23 +307,15 @@ export function TradingPage() {
       CANDLE_PREFETCH_TIMEFRAMES,
       timeframe,
       firstPaintCandleLimit,
-      replayVersion,
     );
-  }, [firstPaintCandleLimit, queryClient, replayVersion, selectedSymbol, timeframe]);
+  }, [firstPaintCandleLimit, queryClient, selectedSymbol, timeframe]);
   useEffect(
     () =>
       wsClient.onReconnect(async () => {
         const recentCandles = await api.getCandles(selectedSymbol, timeframe, 100);
-        mergeCandlesIntoCache(
-          queryClient,
-          selectedSymbol,
-          timeframe,
-          recentCandles,
-          candleLimit,
-          replayVersion,
-        );
+        mergeCandlesIntoCache(queryClient, selectedSymbol, timeframe, recentCandles, candleLimit);
       }),
-    [candleLimit, queryClient, replayVersion, selectedSymbol, timeframe],
+    [candleLimit, queryClient, selectedSymbol, timeframe],
   );
   const chartPrefs = useChartPreferences();
   const swingStructureSettings = useMemo<SwingStructureSettings>(

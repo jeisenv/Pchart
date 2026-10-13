@@ -180,5 +180,4 @@ export const demoApi = {
   isAiTraderEnabled: () => Promise.resolve(false),
   getAnnouncements: () => Promise.resolve([]),
   getAnnouncementsUnreadCount: () => Promise.resolve(0),
-  replayGetSession: () => Promise.resolve(null),
 };

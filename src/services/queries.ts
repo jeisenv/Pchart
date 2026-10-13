@@ -40,9 +40,6 @@ export const queryKeys = {
     candles: (symbol: string, tf: string) => ["candles", symbol, tf] as const,
     economicCalendar: (currencies: string[]) => ["economicCalendar", ...currencies] as const,
   },
-  replay: {
-    session: (accountId: string, date: string) => ["replay", "session", accountId, date] as const,
-  },
 } as const;
 
 // ── Account Queries ────────────────────────────────────
@@ -387,19 +384,11 @@ export function mergeCandlesIntoCache(
   }
 }
 
-export function useCandles(
-  symbol: string,
-  timeframe: string,
-  limit?: number,
-  replayVersion?: number,
-) {
+export function useCandles(symbol: string, timeframe: string, limit?: number, replayVersion?: number) {
   const cacheEnabled = replayVersion == null || replayVersion === 0;
   const cacheEntry = cacheEnabled ? readCandleMemoryCache(symbol, timeframe) : undefined;
   const requestedLimit = Math.min(Math.max(Math.floor(limit ?? 500), 1), 5000);
   return useQuery<MarketDataCandlesPayload, Error, Candle[]>({
-    // Include replayVersion in the query key so each replay session forces a
-    // completely fresh query — React Query won't reuse structural sharing or
-    // stale cache from a previous replay / normal session.
     queryKey: [...queryKeys.market.candles(symbol, timeframe), limit ?? "auto", replayVersion ?? 0],
     queryFn: () => fetchCandlePayload(symbol, timeframe, limit, cacheEnabled, requestedLimit),
     initialData: cacheEntry?.payload,
@@ -1225,19 +1214,6 @@ export function useProcessMergeRequest() {
     mutationFn: (data: { id: string; status: "APPROVED" | "REJECTED"; adminNotes?: string }) =>
       api.processMergeRequest(data.id, data.status, data.adminNotes),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["features", "merge-requests"] }),
-  });
-}
-
-// ── Replay Queries ─────────────────────────────────────
-export function useReplaySession(accountId: string | null, sessionDate: string | null) {
-  return useQuery({
-    queryKey: queryKeys.replay.session(accountId!, sessionDate!),
-    queryFn: () => api.replayGetSession(accountId!, sessionDate!),
-    enabled: !!accountId && !!sessionDate,
-    // 30s, not Infinity — replaying *today* a second time must pick up trades
-    // and candles recorded since the previous run.
-    staleTime: 30_000,
-    gcTime: 5 * 60 * 1000,
   });
 }
 
