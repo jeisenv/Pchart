@@ -6,7 +6,6 @@ import type { SwingStructureSettings } from "../../lib/swing-structure.ts";
 import { cn } from "../../lib/utils.ts";
 import { ColorPalettePicker } from "../../components/ui/color-palette-picker.tsx";
 import { ChartTemplatesMenu } from "./ChartTemplatesMenu.tsx";
-import { ReplayHUD } from "./ReplayHUD.tsx";
 import {
   type DrawingLine,
   type DrawingTool,
@@ -43,8 +42,6 @@ export interface ChartToolbarProps {
   drawings: DrawingLine[];
   onClearDrawings: () => void;
   aiTraderEnabled?: boolean;
-  isReplaying?: boolean;
-  replayAccountId?: string | null;
   activePlugins?: string[];
   onTogglePlugin?: (id: string) => void;
   onSetIndicators?: (indicators: IndicatorType[]) => void;
@@ -84,8 +81,6 @@ export const ChartToolbar = memo(function ChartToolbar({
   activePlugins = [],
   onSetIndicators,
   onSetPlugins,
-  isReplaying = false,
-  replayAccountId,
 }: ChartToolbarProps) {
   const [showSymbolSearch, setShowSymbolSearch] = useState(false);
   const [symbolFilter, setSymbolFilter] = useState("");
@@ -139,7 +134,6 @@ export const ChartToolbar = memo(function ChartToolbar({
       <div className="flex min-w-0 items-center gap-2">
       <div className="relative shrink-0">
         <button
-          disabled={isReplaying}
           onClick={() => setShowSymbolSearch((v) => !v)}
           className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 font-bold text-sm tracking-tight text-slate-900 shadow-[0_2px_8px_rgba(15,23,42,0.04)] transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-200 hover:bg-slate-50"
         >
@@ -189,7 +183,6 @@ export const ChartToolbar = memo(function ChartToolbar({
         {TIMEFRAMES.map((tf) => (
           <button
             key={tf}
-            disabled={isReplaying}
             onClick={() => onTimeframeChange(tf)}
             className={cn(
               "shrink-0 rounded px-1.5 py-1 text-[9px] font-medium text-slate-900 transition-colors disabled:cursor-not-allowed disabled:opacity-50",
@@ -205,7 +198,7 @@ export const ChartToolbar = memo(function ChartToolbar({
         data-testid="toolbar-actions"
         className="relative z-[2200] flex min-w-0 flex-1 flex-nowrap items-center justify-start gap-2 overflow-visible overscroll-x-contain scroll-smooth snap-x snap-mandatory whitespace-nowrap pb-0.5 [&::-webkit-scrollbar]:hidden"
       >
-        {onSetIndicators && onSetPlugins && !isReplaying && (
+        {onSetIndicators && onSetPlugins && (
           <ChartTemplatesMenu
             timeframe={timeframe}
             onSetTimeframe={onTimeframeChange}
@@ -214,20 +207,6 @@ export const ChartToolbar = memo(function ChartToolbar({
             activePlugins={activePlugins}
             onSetPlugins={onSetPlugins}
           />
-        )}
-        {replayAccountId ? (
-          <ReplayHUD accountId={replayAccountId} />
-        ) : (
-          <button
-            type="button"
-            disabled
-            title="Select an account to use market replay"
-            aria-label="Replay unavailable: select an account"
-            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-semibold normal-case tracking-normal text-slate-400"
-          >
-            <CalendarClock className="h-3.5 w-3.5" />
-            Replay
-          </button>
         )}
         <div ref={indicatorMenuRef} className="relative z-[1101] shrink-0 snap-start overflow-visible whitespace-nowrap">
           <button

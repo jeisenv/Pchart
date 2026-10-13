@@ -36,13 +36,9 @@ import { ChartToolbar } from "./trading/ChartToolbar.tsx";
 import {
   type DrawingTool,
   type MagnetMode,
-  REPLAY_ENABLED,
   TIMEFRAMES,
   type Timeframe,
 } from "./trading/constants.ts";
-import { ReplayScrubber } from "./trading/ReplayScrubber.tsx";
-import { useReplayChartData } from "./trading/useReplayChartData.ts";
-import { useReplayPlayback } from "./trading/useReplayPlayback.ts";
 import { getPipDigits } from "./trading/utils.ts";
 
 type ErrorWithMessage = { message?: string };
@@ -86,7 +82,6 @@ export function TradingPage() {
     activeAccountId,
     symbols: _storeSymbols,
     replayVersion,
-    isReplaying,
   } = useTradingStore();
   // Chart timeframe persistence (#8)
   const [timeframe, setTimeframe] = useState<Timeframe>(() => {
@@ -307,7 +302,6 @@ export function TradingPage() {
     isPlaceholderData: isCandlesPlaceholder,
   } = useCandles(selectedSymbol, timeframe, candleLimit, replayVersion);
   useEffect(() => {
-    if (isReplaying) return;
     void prefetchCandlesForTimeframes(
       queryClient,
       selectedSymbol,
@@ -316,11 +310,10 @@ export function TradingPage() {
       firstPaintCandleLimit,
       replayVersion,
     );
-  }, [firstPaintCandleLimit, isReplaying, queryClient, replayVersion, selectedSymbol, timeframe]);
+  }, [firstPaintCandleLimit, queryClient, replayVersion, selectedSymbol, timeframe]);
   useEffect(
     () =>
       wsClient.onReconnect(async () => {
-        if (isReplaying) return;
         const recentCandles = await api.getCandles(selectedSymbol, timeframe, 100);
         mergeCandlesIntoCache(
           queryClient,
@@ -331,12 +324,8 @@ export function TradingPage() {
           replayVersion,
         );
       }),
-    [candleLimit, isReplaying, queryClient, replayVersion, selectedSymbol, timeframe],
+    [candleLimit, queryClient, replayVersion, selectedSymbol, timeframe],
   );
-  // Replay: sliced 1m buffer + trade-event markers; null when not replaying.
-  // While replayCandles is set, the live tick/candle feed is suppressed below
-  // so real-time data can't paint over the playback.
-  const { replayCandles, replayTradeEvents } = useReplayChartData(activeAccountId);
   const chartPrefs = useChartPreferences();
   const swingStructureSettings = useMemo<SwingStructureSettings>(
     () => ({
@@ -405,7 +394,6 @@ export function TradingPage() {
     const next = order[(order.indexOf(chartPrefs.magnetMode) + 1) % order.length] ?? "none";
     updateChartPreferences({ magnetMode: next });
   }, [chartPrefs.magnetMode]);
-  useReplayPlayback(activeAccountId ?? "");
   const { data: positions = [] } = usePositions(activeAccountId);
   const { data: orders = [] } = useOrders(activeAccountId);
   const chartPositions = chartPrefs.overlayPositionsOnChart ? positions : [];
@@ -471,8 +459,6 @@ export function TradingPage() {
         onDrawingTool={handleDrawingTool}
         drawings={drawings}
         onClearDrawings={clearDrawings}
-        isReplaying={isReplaying}
-        replayAccountId={activeAccountId}
         activePlugins={activePlugins}
         onTogglePlugin={handleTogglePlugin}
         onSetIndicators={setActiveIndicators}
@@ -496,11 +482,11 @@ export function TradingPage() {
             <div className="absolute inset-0 bg-slate-50" />
             <div className="relative h-full w-full">
             <ChartPanel
-              candles={replayCandles ?? candles}
-              isCandlesLoading={!replayCandles && isCandlesFetching}
-              isCandlesPlaceholder={!replayCandles && isCandlesPlaceholder}
+              candles={candles}
+              isCandlesLoading={isCandlesFetching}
+              isCandlesPlaceholder={isCandlesPlaceholder}
               selectedSymbol={selectedSymbol}
-              timeframe={replayCandles ? "1m" : timeframe}
+              timeframe={timeframe}
               isDark={isDark}
               activeIndicators={activeIndicators}
               swingStructureSettings={swingStructureSettings}
@@ -518,13 +504,11 @@ export function TradingPage() {
               stayInDrawingMode={chartPrefs.stayInDrawingMode}
               positions={chartPositions}
               orders={chartOrders}
-              tick={replayCandles ? undefined : tick}
-              liveCandle={replayCandles ? undefined : liveCandle}
+              tick={tick}
+              liveCandle={liveCandle}
               pipDigits={pipDigits}
               symbolInfo={symbolInfo}
               onModifyPosition={handleChartModifyPosition}
-              replayTradeEvents={replayTradeEvents}
-              isReplaying={isReplaying}
               activePlugins={activePlugins}
               onTogglePlugin={handleTogglePlugin}
               accountEquity={account?.equity ?? account?.balance ?? 0}
@@ -535,11 +519,6 @@ export function TradingPage() {
             />
             </div>
           </div>
-
-          {/* Replay timeline scrubber — disabled until the feature is QA'd */}
-          {REPLAY_ENABLED && isReplaying && activeAccountId != null && (
-            <ReplayScrubber accountId={activeAccountId} />
-          )}
 
         </div>
       </div>
