@@ -305,8 +305,8 @@ export function ChartTemplatesMenu(props: ChartTemplatesMenuProps) {
 
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full z-50 mt-1 max-h-[calc(100dvh-7rem)] w-60 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-lg border border-border bg-card/95 py-1 shadow-2xl backdrop-blur-xl">
+          <div className="fixed inset-0 z-[2100]" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 top-full z-[2200] mt-1 max-h-[calc(100dvh-7rem)] w-60 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-lg border border-border bg-card/95 py-1 shadow-2xl backdrop-blur-xl">
             <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               Layout templates
             </div>

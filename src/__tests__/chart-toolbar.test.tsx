@@ -77,12 +77,13 @@ describe("ChartToolbar", () => {
     expect(props.onEngulfingZonesSettingsChange).toHaveBeenCalledWith({ bearishBorderColor: "#123456" });
   });
 
-  it("removes active indicators from the quick-access chip", async () => {
+  it("toggles an active indicator from the dropdown menu", async () => {
     const user = userEvent.setup();
     const props = { ...toolbarProps(), activeIndicators: ["SWING"] as ChartToolbarProps["activeIndicators"] };
     render(<ChartToolbar {...props} />);
 
-    await user.click(screen.getByRole("button", { name: "Remove Swing Structure" }));
+    await user.click(screen.getByRole("button", { name: "Indicators 1" }));
+    await user.click(screen.getByRole("button", { name: "Swing Structure overlay" }));
 
     expect(props.onToggleIndicator).toHaveBeenCalledWith("SWING");
   });
@@ -150,13 +151,33 @@ describe("ChartToolbar", () => {
     await waitFor(() => expect(screen.queryByRole("menu", { name: "Drawing tools" })).not.toBeInTheDocument());
   });
 
-  it("keeps timeframes horizontally scrollable without a quote/feed summary", () => {
+  it("keeps the action row unclipped so floating menus can render above the chart canvas", () => {
+    render(<ChartToolbar {...toolbarProps()} />);
+
+    const actionRow = screen.getByTestId("toolbar-actions");
+    expect(actionRow.className).toContain("overflow-visible");
+    expect(actionRow.className).not.toContain("overflow-x-auto");
+  });
+
+  it("anchors the drawing menu to the visible edge instead of spilling off-screen", async () => {
+    const user = userEvent.setup();
+    render(<ChartToolbar {...toolbarProps()} showIndicatorMenu={false} />);
+
+    await user.click(screen.getByRole("button", { name: "Drawing tools" }));
+    const menu = screen.getByRole("menu", { name: "Drawing tools" });
+    expect(menu.className).toContain("right-0");
+    expect(menu.className).toContain("left-auto");
+  });
+
+  it("keeps timeframes in a compact scroll window with a limited visible count", () => {
     render(<ChartToolbar {...toolbarProps()} />);
 
     expect(screen.queryByText("Bid")).not.toBeInTheDocument();
     expect(screen.queryByText("Ask")).not.toBeInTheDocument();
     expect(screen.queryByText("Live")).not.toBeInTheDocument();
     expect(screen.queryByText("Spread")).not.toBeInTheDocument();
-    expect(screen.getByTestId("timeframe-strip").className).toContain("overflow-x-auto");
+    const strip = screen.getByTestId("timeframe-strip");
+    expect(strip.className).toContain("overflow-x-auto");
+    expect(strip.className).toContain("max-w-[12rem]");
   });
 });

@@ -446,7 +446,7 @@ export function TradingPage() {
   }, []);
 
   return (
-    <div ref={pageRef} className="flex flex-col h-full overflow-hidden bg-slate-50 text-slate-900">
+    <div ref={pageRef} className="relative z-0 flex h-full flex-col overflow-visible bg-slate-50 text-slate-900">
       {/* ── Top Toolbar ──────────────────────────────────── */}
       <ChartToolbar
         selectedSymbol={selectedSymbol}
@@ -487,11 +487,11 @@ export function TradingPage() {
       />
 
       {/* ── Main Layout ──────────────────────────────────── */}
-      <div className="flex flex-1 overflow-hidden bg-slate-100 p-0">
+      <div className="flex flex-1 overflow-visible bg-slate-100 p-0">
         {/* Chart + Bottom Panel */}
-        <div className="flex flex-col flex-1 min-w-0 p-0">
+        <div className="flex flex-col flex-1 min-w-0 overflow-visible p-0">
           {/* Chart Area */}
-          <div className="flex-1 min-h-[200px] relative border-0 bg-slate-50 shadow-none">
+          <div className="relative flex-1 min-h-[200px] overflow-visible border-0 bg-slate-50 shadow-none">
             <div className="absolute inset-0 bg-slate-50" />
             <div className="relative h-full w-full">
             <ChartPanel
